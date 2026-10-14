@@ -3,6 +3,7 @@
 import { writeFileSync } from 'node:fs'
 
 const VERSION = '17.0.0'
+const MIN_PER_LEVEL = 3
 const MAX_PER_LEVEL = 16
 const SKIN_TONE = /1F3F[B-F]/
 
@@ -22,6 +23,22 @@ for (const line of text.split('\n')) {
   } else if (subgroup && !line.startsWith('#') && line.includes('; fully-qualified') && !SKIN_TONE.test(line)) {
     subgroup.emojis.push(line.split('# ')[1].split(' ')[0])
   }
+}
+
+// Merge tiny subgroups into their neighbour (next one, or previous if last)
+for (const w of worlds) {
+  const merged = []
+  let carry = null
+  for (const l of w.levels) {
+    const cur = carry ? { name: `${carry.name} + ${l.name}`, emojis: [...carry.emojis, ...l.emojis] } : l
+    carry = cur.emojis.length < MIN_PER_LEVEL ? cur : null
+    if (!carry) merged.push(cur)
+  }
+  if (carry) {
+    const prev = merged.pop()
+    merged.push(prev ? { name: `${prev.name} + ${carry.name}`, emojis: [...prev.emojis, ...carry.emojis] } : carry)
+  }
+  w.levels = merged
 }
 
 // Split oversized subgroups into evenly sized chunks
