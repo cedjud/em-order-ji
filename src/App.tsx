@@ -28,6 +28,8 @@ type Game = {
   result?: Result
 }
 
+type Drag = { emoji: string; from: 'pool' | 'order'; x: number; y: number; over: number | null }
+
 type HighScore = { score: number; reached: string; date: string }
 
 function load<T>(key: string, fallback: T): T {
@@ -84,6 +86,9 @@ export default function App() {
   const [scores, setScores] = useState<HighScore[]>(() => load(SCORES_KEY, []))
   const [now, setNow] = useState(() => Date.now())
   const about = useRef<HTMLDialogElement>(null)
+  const orderRow = useRef<HTMLDivElement>(null)
+  const [drag, setDrag] = useState<Drag | null>(null)
+  const dragged = useRef(false)
 
   useEffect(() => save(GAME_KEY, game), [game])
   useEffect(() => save(SCORES_KEY, scores), [scores])
@@ -115,11 +120,62 @@ export default function App() {
   const timeLeft = game ? Math.max(0, game.endsAt - now) : 0
 
   function pick(e: string) {
+    if (dragged.current) return
     setGame((g) => g && { ...g, picked: [...g.picked, e] })
   }
 
   function unpick(e: string) {
+    if (dragged.current) return
     setGame((g) => g && { ...g, picked: g.picked.filter((p) => p !== e) })
+  }
+
+  // Insertion index in the order row under (x, y), or null when outside it
+  function dropIndex(x: number, y: number) {
+    const row = orderRow.current
+    if (!row) return null
+    const r = row.getBoundingClientRect()
+    const pad = 24
+    if (x < r.left - pad || x > r.right + pad || y < r.top - pad || y > r.bottom + pad) return null
+    const items = [...row.querySelectorAll<HTMLElement>('[data-e]')]
+    const i = items.findIndex((el) => {
+      const b = el.getBoundingClientRect()
+      return y < b.top || (y <= b.bottom && x < b.left + b.width / 2)
+    })
+    return i === -1 ? items.length : i
+  }
+
+  // Pointer-based drag so it works with touch; taps still go through onClick
+  function startDrag(e: React.PointerEvent, emoji: string, from: Drag['from']) {
+    if (e.button !== 0) return
+    const x0 = e.clientX
+    const y0 = e.clientY
+    let current: Drag | null = null
+    const move = (ev: PointerEvent) => {
+      if (!current && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return
+      current = { emoji, from, x: ev.clientX, y: ev.clientY, over: dropIndex(ev.clientX, ev.clientY) }
+      setDrag(current)
+    }
+    const end = (ev: PointerEvent) => {
+      removeEventListener('pointermove', move)
+      removeEventListener('pointerup', end)
+      removeEventListener('pointercancel', end)
+      if (!current) return
+      dragged.current = true
+      setTimeout(() => (dragged.current = false))
+      setDrag(null)
+      if (ev.type === 'pointercancel') return
+      const { over } = current
+      setGame((g) => {
+        if (!g || g.phase !== 'play') return g
+        const rest = g.picked.filter((p) => p !== emoji)
+        if (over === null) return from === 'order' ? { ...g, picked: rest } : g
+        rest.splice(over, 0, emoji)
+        return { ...g, picked: rest }
+      })
+    }
+    addEventListener('pointermove', move)
+    addEventListener('pointerup', end)
+    addEventListener('pointercancel', end)
   }
 
   function submit(timedOut = false) {
@@ -262,19 +318,40 @@ export default function App() {
                 {game.pool
                   .filter((e) => !game.picked.includes(e))
                   .map((e) => (
-                    <button key={e} onClick={() => pick(e)}>
+                    <button
+                      key={e}
+                      className={drag?.emoji === e ? 'lifted' : ''}
+                      onPointerDown={(ev) => startDrag(ev, e, 'pool')}
+                      onClick={() => pick(e)}
+                    >
                       {e}
                     </button>
                   ))}
               </div>
               <p>Your order</p>
-              <div className="row">
-                {game.picked.map((e) => (
-                  <button key={e} onClick={() => unpick(e)}>
-                    {e}
-                  </button>
-                ))}
+              <div className="row" ref={orderRow}>
+                {(() => {
+                  const items = (drag ? game.picked.filter((p) => p !== drag.emoji) : game.picked).map((e) => (
+                    <button key={e} data-e onPointerDown={(ev) => startDrag(ev, e, 'order')} onClick={() => unpick(e)}>
+                      {e}
+                    </button>
+                  ))
+                  if (drag?.over != null)
+                    items.splice(
+                      drag.over,
+                      0,
+                      <span key="slot" className="slot">
+                        {drag.emoji}
+                      </span>,
+                    )
+                  return items
+                })()}
               </div>
+              {drag && (
+                <div className="ghost" style={{ left: drag.x, top: drag.y }}>
+                  {drag.emoji}
+                </div>
+              )}
               <p>
                 <button disabled={game.picked.length !== level.emojis.length} onClick={() => submit()}>
                   Confirm

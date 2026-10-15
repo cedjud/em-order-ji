@@ -43,3 +43,29 @@ progress {
   color: CanvasText;
   -webkit-text-fill-color: CanvasText;
 }
+.row button {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.lifted {
+  opacity: 0.3;
+}
+.slot {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 48px;
+  height: 48px;
+  font-size: 28px;
+  border: 1px dashed;
+  opacity: 0.4;
+}
+.ghost {
+  position: fixed;
+  z-index: 1;
+  font-size: 40px;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
