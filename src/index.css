@@ -124,3 +124,6 @@ header h1,
 header p {
   margin: 0.5em 0;
 }
+.me {
+  font-weight: bold;
+}

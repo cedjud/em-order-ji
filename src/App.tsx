@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import worlds from './levels.json'
+import { Leaderboard } from './Leaderboard'
 
 // Durations scale with emoji count: base + per emoji
 const previewMs = (n: number) => 2_000 + 400 * n
@@ -26,11 +27,12 @@ type Game = {
   picked: string[]
   endsAt: number
   result?: Result
+  quit?: boolean
 }
 
-type Drag = { emoji: string; from: 'pool' | 'order'; x: number; y: number; over: number | null }
-
 type HighScore = { score: number; reached: string; date: string }
+
+type Drag = { emoji: string; from: 'pool' | 'order'; x: number; y: number; over: number | null }
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -94,14 +96,15 @@ export default function App() {
   useEffect(() => save(GAME_KEY, game), [game])
   useEffect(() => save(SCORES_KEY, scores), [scores])
 
-  function endGame(g: Game) {
+  function endGame(g: Game, quit = false) {
     const reached = label(LEVELS[Math.min(g.index, LEVELS.length - 1)])
-    setScores((s) =>
-      [...s, { score: g.score, reached, date: new Date().toLocaleDateString() }]
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 10),
-    )
-    setGame({ ...g, phase: 'done' })
+    if (g.score > 0)
+      setScores((s) =>
+        [...s, { score: g.score, reached, date: new Date().toLocaleDateString() }]
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 10),
+      )
+    setGame({ ...g, phase: 'done', quit })
   }
 
   // Tick timer during preview/play; preview ends into play, play ends in scoring what's picked
@@ -129,7 +132,11 @@ export default function App() {
   }, [phase])
 
   const level = game && LEVELS[game.index]
-  const timeLeft = game ? Math.max(0, game.endsAt - now) : 0
+  // Clamp to the phase length: `now` can be stale for a tick after a level starts
+  const timeLeft =
+    game && level
+      ? Math.min(Math.max(0, game.endsAt - now), (game.phase === 'preview' ? previewMs : roundMs)(level.emojis.length))
+      : 0
 
   function pick(e: string) {
     if (dragged.current) return
@@ -220,7 +227,9 @@ export default function App() {
   }
 
   function cancel() {
-    if (game?.mode === 'free' || confirm('Cancel current game?')) setGame(null)
+    if (!game) return
+    if (game.mode === 'free') setGame(null)
+    else if (confirm('End game and keep your score?')) endGame(game, true)
   }
 
   return (
@@ -230,7 +239,7 @@ export default function App() {
         <p>
           <button onClick={() => about.current?.showModal()}>About</button>{' '}
           {game && (game.phase === 'preview' || game.phase === 'play' || game.phase === 'result') && (
-            <button onClick={cancel}>{game.mode === 'free' ? 'Back' : 'Cancel game'}</button>
+            <button onClick={cancel}>{game.mode === 'free' ? 'Back' : 'End game'}</button>
           )}
         </p>
       </header>
@@ -283,7 +292,10 @@ export default function App() {
             <button onClick={random}>Random</button>
           </p>
 
-          <h2>High scores</h2>
+          <h2>Challenge leaderboard</h2>
+          <Leaderboard board="challenge" />
+
+          <h2>Your best</h2>
           {scores.length === 0 ? (
             <p>None yet.</p>
           ) : (
@@ -455,6 +467,12 @@ export default function App() {
                       </>
                     )}
                   </p>
+                  {game.mode === 'free' && (
+                    <>
+                      <h3>Level leaderboard</h3>
+                      <Leaderboard key={game.endsAt} board={`free:${level.name}`} score={game.result.levelScore} />
+                    </>
+                  )}
                 </>
               )}
             </>
@@ -462,8 +480,9 @@ export default function App() {
 
           {game.phase === 'done' && (
             <>
-              <h2>You finished every level!</h2>
+              <h2>{game.quit ? `Game over – reached ${label(level)}` : 'You finished every level!'}</h2>
               <p>Final score: {game.score}</p>
+              <Leaderboard board="challenge" score={game.score} />
               <button onClick={() => setGame(null)}>Back to start</button>
             </>
           )}
