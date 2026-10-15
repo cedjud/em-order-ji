@@ -225,13 +225,15 @@ export default function App() {
 
   return (
     <>
-      <h1>em-order-ji</h1>
-      <p>
-        <button onClick={() => about.current?.showModal()}>About</button>{' '}
-        {game && (game.phase === 'preview' || game.phase === 'play' || game.phase === 'result') && (
-          <button onClick={cancel}>{game.mode === 'free' ? 'Back' : 'Cancel game'}</button>
-        )}
-      </p>
+      <header>
+        <h1>em-order-ji</h1>
+        <p>
+          <button onClick={() => about.current?.showModal()}>About</button>{' '}
+          {game && (game.phase === 'preview' || game.phase === 'play' || game.phase === 'result') && (
+            <button onClick={cancel}>{game.mode === 'free' ? 'Back' : 'Cancel game'}</button>
+          )}
+        </p>
+      </header>
 
       <dialog ref={about}>
         <p>Memorise the order shown, then tap the emojis in the official Unicode order. Correct positions score a point, multiplied by up to 2× for time left if you place them all. Run out of time and only what you've placed counts.</p>
@@ -309,7 +311,18 @@ export default function App() {
           {game.phase !== 'done' && (
             <>
               <label className="timer">
-                {game.phase === 'preview' ? 'Memorise' : 'Time'} ·{' '}
+                {game.phase === 'preview' ? (
+                  <>
+                    {/* Eyes cycle 1 → 2 → 3 */}
+                    <span className="eyes">
+                      {'👀'.repeat(1 + (Math.floor((previewMs(level.emojis.length) - timeLeft) / 300) % 3))}
+                    </span>{' '}
+                    Memorise
+                  </>
+                ) : (
+                  '⏱️ Time'
+                )}{' '}
+                ·{' '}
                 {Math.ceil(
                   (game.phase === 'result' && game.result
                     ? (game.result.timeLeft ?? (game.result.multiplier - 1) * roundMs(level.emojis.length))
@@ -327,7 +340,7 @@ export default function App() {
               </label>
 
               {/* Theirs: correct order, then your order while playing */}
-              <p>{game.phase === 'play' ? 'Your order' : 'Correct order'}</p>
+              <p className="label">{game.phase === 'play' ? '🎯 Your order' : '✅ Correct order'}</p>
               <div className="row" ref={orderRow}>
                 {game.phase === 'preview' &&
                   level.emojis.map((e) => (
@@ -376,7 +389,7 @@ export default function App() {
               </div>
 
               {/* Ours: jumbled while playing, graded order after */}
-              <p>{game.phase === 'result' ? 'Your order' : 'Jumbled'}</p>
+              <p className="label">{game.phase === 'result' ? '🎯 Your order' : '🔀 Jumbled'}</p>
               <div className="row" ref={ourRow}>
                 {game.phase === 'play' &&
                   game.pool
@@ -393,11 +406,21 @@ export default function App() {
                     ))}
                 {game.phase === 'result' &&
                   game.result &&
-                  game.picked.map((e, i) => (
-                    <button key={`g${e}`} className={game.result!.correct[i] ? '' : 'wrong'} disabled>
-                      {e}
-                    </button>
-                  ))}
+                  level.emojis.map((_, i) => {
+                    const e = game.picked[i]
+                    if (!e)
+                      return (
+                        <span key={`x${i}`} className="empty">
+                          ❌
+                        </span>
+                      )
+                    return (
+                      <button key={`g${e}`} disabled>
+                        {e}
+                        <span className="badge">{game.result!.correct[i] ? '✅' : '❌'}</span>
+                      </button>
+                    )
+                  })}
               </div>
 
               {drag && (
