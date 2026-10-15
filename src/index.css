@@ -38,3 +38,8 @@ progress {
   flex-direction: column;
   gap: 8px;
 }
+.row button:disabled {
+  opacity: 1;
+  color: CanvasText;
+  -webkit-text-fill-color: CanvasText;
+}
