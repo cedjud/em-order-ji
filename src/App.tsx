@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import worlds from './levels.json'
 
 // Durations scale with emoji count: base + per emoji
@@ -13,7 +13,7 @@ const LEVELS: Level[] = worlds.flatMap((w, wi) =>
   w.levels.map((l, li) => ({ world: wi + 1, level: li + 1, worldName: w.name, name: l.name, emojis: l.emojis })),
 )
 
-type Result = { correct: boolean[]; points: number; multiplier: number; levelScore: number; timedOut: boolean }
+type Result = { correct: boolean[]; points: number; multiplier: number; levelScore: number; timedOut: boolean; timeLeft?: number }
 
 type Mode = 'challenge' | 'free'
 
@@ -87,6 +87,7 @@ export default function App() {
   const [now, setNow] = useState(() => Date.now())
   const about = useRef<HTMLDialogElement>(null)
   const orderRow = useRef<HTMLDivElement>(null)
+  const ourRow = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<Drag | null>(null)
   const dragged = useRef(false)
 
@@ -115,6 +116,17 @@ export default function App() {
     }, 100)
     return () => clearInterval(id)
   })
+
+  // On submit, slide our graded order down from the top box into the bottom one
+  const phase = game?.phase
+  useLayoutEffect(() => {
+    if (phase !== 'result' || !orderRow.current || !ourRow.current) return
+    const dy = orderRow.current.getBoundingClientRect().top - ourRow.current.getBoundingClientRect().top
+    ourRow.current.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], {
+      duration: 200,
+      easing: 'ease-out',
+    })
+  }, [phase])
 
   const level = game && LEVELS[game.index]
   const timeLeft = game ? Math.max(0, game.endsAt - now) : 0
@@ -182,9 +194,12 @@ export default function App() {
     if (!game || !level) return
     const correct = game.picked.map((e, i) => e === level.emojis[i])
     const points = correct.filter(Boolean).length
-    const multiplier = 1 + Math.max(0, game.endsAt - Date.now()) / roundMs(level.emojis.length)
+    // Time bonus only for a complete order
+    const timeLeft = Math.max(0, game.endsAt - Date.now())
+    const full = game.picked.length === level.emojis.length
+    const multiplier = full ? 1 + timeLeft / roundMs(level.emojis.length) : 1
     const levelScore = Math.round(points * multiplier)
-    const result = { correct, points, multiplier, levelScore, timedOut }
+    const result = { correct, points, multiplier, levelScore, timedOut, timeLeft }
     setGame({ ...game, phase: 'result', score: game.score + levelScore, result })
   }
 
@@ -219,7 +234,7 @@ export default function App() {
       </p>
 
       <dialog ref={about}>
-        <p>Memorise the order shown, then tap the emojis in the official Unicode order. Correct positions score a point, multiplied by up to 2× for time left. Run out of time and only what you've placed counts.</p>
+        <p>Memorise the order shown, then tap the emojis in the official Unicode order. Correct positions score a point, multiplied by up to 2× for time left if you place them all. Run out of time and only what you've placed counts.</p>
         <p>
           Order reference:{' '}
           <a href="https://www.unicode.org/emoji/charts-17.0/emoji-ordering.html" target="_blank" rel="noreferrer">
@@ -291,109 +306,134 @@ export default function App() {
             {game.mode === 'challenge' ? `Challenge · Score: ${game.score}` : 'Free play'}
           </p>
 
-          {(game.phase === 'preview' || game.phase === 'play') && (
-            <label className="timer">
-              {game.phase === 'preview' ? 'Memorise' : 'Time'} · {Math.ceil(timeLeft / 1000)}s
-              <progress max={(game.phase === 'preview' ? previewMs : roundMs)(level.emojis.length)} value={timeLeft} />
-            </label>
-          )}
-
-          {game.phase === 'preview' && (
+          {game.phase !== 'done' && (
             <>
-              <p>Correct order</p>
-              <div className="row">
-                {level.emojis.map((e) => (
-                  <button key={e} disabled>
-                    {e}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
+              <label className="timer">
+                {game.phase === 'preview' ? 'Memorise' : 'Time'} ·{' '}
+                {Math.ceil(
+                  (game.phase === 'result' && game.result
+                    ? (game.result.timeLeft ?? (game.result.multiplier - 1) * roundMs(level.emojis.length))
+                    : timeLeft) / 1000,
+                )}
+                s
+                <progress
+                  max={(game.phase === 'preview' ? previewMs : roundMs)(level.emojis.length)}
+                  value={
+                    game.phase === 'result' && game.result
+                      ? (game.result.timeLeft ?? (game.result.multiplier - 1) * roundMs(level.emojis.length))
+                      : timeLeft
+                  }
+                />
+              </label>
 
-          {game.phase === 'play' && (
-            <>
-              <p>Jumbled</p>
-              <div className="row">
-                {game.pool
-                  .filter((e) => !game.picked.includes(e))
-                  .map((e) => (
-                    <button
-                      key={e}
-                      className={drag?.emoji === e ? 'lifted' : ''}
-                      onPointerDown={(ev) => startDrag(ev, e, 'pool')}
-                      onClick={() => pick(e)}
-                    >
+              {/* Theirs: correct order, then your order while playing */}
+              <p>{game.phase === 'play' ? 'Your order' : 'Correct order'}</p>
+              <div className="row" ref={orderRow}>
+                {game.phase === 'preview' &&
+                  level.emojis.map((e) => (
+                    <button key={`c${e}`} disabled>
+                      {e}
+                    </button>
+                  ))}
+                {game.phase === 'play' && (
+                  <>
+                    <div className="overlay" aria-hidden>
+                      {level.emojis.map((e) => (
+                        <button key={e} className="out" disabled tabIndex={-1}>
+                          {e}
+                        </button>
+                      ))}
+                    </div>
+                    {(() => {
+                      const items = (drag ? game.picked.filter((p) => p !== drag.emoji) : game.picked).map((e) => (
+                        <button
+                          key={`p${e}`}
+                          data-e
+                          onPointerDown={(ev) => startDrag(ev, e, 'order')}
+                          onClick={() => unpick(e)}
+                        >
+                          {e}
+                        </button>
+                      ))
+                      if (drag?.over != null)
+                        items.splice(
+                          drag.over,
+                          0,
+                          <span key="slot" className="slot">
+                            {drag.emoji}
+                          </span>,
+                        )
+                      return items
+                    })()}
+                  </>
+                )}
+                {game.phase === 'result' &&
+                  level.emojis.map((e) => (
+                    <button key={`r${e}`} className="in" disabled>
                       {e}
                     </button>
                   ))}
               </div>
-              <p>Your order</p>
-              <div className="row" ref={orderRow}>
-                {(() => {
-                  const items = (drag ? game.picked.filter((p) => p !== drag.emoji) : game.picked).map((e) => (
-                    <button key={e} data-e onPointerDown={(ev) => startDrag(ev, e, 'order')} onClick={() => unpick(e)}>
+
+              {/* Ours: jumbled while playing, graded order after */}
+              <p>{game.phase === 'result' ? 'Your order' : 'Jumbled'}</p>
+              <div className="row" ref={ourRow}>
+                {game.phase === 'play' &&
+                  game.pool
+                    .filter((e) => !game.picked.includes(e))
+                    .map((e) => (
+                      <button
+                        key={`j${e}`}
+                        className={drag?.emoji === e ? 'in lifted' : 'in'}
+                        onPointerDown={(ev) => startDrag(ev, e, 'pool')}
+                        onClick={() => pick(e)}
+                      >
+                        {e}
+                      </button>
+                    ))}
+                {game.phase === 'result' &&
+                  game.result &&
+                  game.picked.map((e, i) => (
+                    <button key={`g${e}`} className={game.result!.correct[i] ? '' : 'wrong'} disabled>
                       {e}
                     </button>
-                  ))
-                  if (drag?.over != null)
-                    items.splice(
-                      drag.over,
-                      0,
-                      <span key="slot" className="slot">
-                        {drag.emoji}
-                      </span>,
-                    )
-                  return items
-                })()}
+                  ))}
               </div>
+
               {drag && (
                 <div className="ghost" style={{ left: drag.x, top: drag.y }}>
                   {drag.emoji}
                 </div>
               )}
-              <p>
-                <button disabled={game.picked.length !== level.emojis.length} onClick={() => submit()}>
-                  Confirm
-                </button>
-              </p>
-            </>
-          )}
 
-          {game.phase === 'result' && game.result && (
-            <>
-              {game.result.timedOut && <h2>Time's up!</h2>}
-              <p>Your order</p>
-              <div className="row">
-                {game.picked.map((e, i) => (
-                  <button key={e} className={game.result!.correct[i] ? '' : 'wrong'} disabled>
-                    {e}
+              {game.phase === 'play' && (
+                <p>
+                  <button disabled={game.picked.length === 0} onClick={() => submit()}>
+                    Confirm
                   </button>
-                ))}
-              </div>
-              <p>Correct order</p>
-              <div className="row">
-                {level.emojis.map((e) => (
-                  <button key={e} disabled>
-                    {e}
-                  </button>
-                ))}
-              </div>
-              <p>
-                {game.result.points}/{level.emojis.length} correct × {game.result.multiplier.toFixed(2)} ={' '}
-                {game.result.levelScore} points
-              </p>
-              <p>
-                {(game.mode === 'challenge' || game.index + 1 < LEVELS.length) && (
-                  <button onClick={next}>Next level</button>
-                )}{' '}
-                {game.mode === 'free' && (
-                  <>
-                    <button onClick={() => playFree(game.index)}>Retry</button>{' '}
-                    <button onClick={random}>Random</button>
-                  </>
-                )}
-              </p>
+                </p>
+              )}
+
+              {game.phase === 'result' && game.result && (
+                <>
+                  <p>
+                    {game.result.timedOut && "Time's up! "}
+                    {game.result.points}/{level.emojis.length} correct × {game.result.multiplier.toFixed(2)} ={' '}
+                    {game.result.levelScore} points
+                  </p>
+                  <p>
+                    {(game.mode === 'challenge' || game.index + 1 < LEVELS.length) && (
+                      <button onClick={next}>Next level</button>
+                    )}{' '}
+                    {game.mode === 'free' && (
+                      <>
+                        <button onClick={() => playFree(game.index)}>Retry</button>{' '}
+                        <button onClick={random}>Random</button>
+                      </>
+                    )}
+                  </p>
+                </>
+              )}
             </>
           )}
 
