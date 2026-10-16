@@ -127,3 +127,9 @@ header p {
 .me {
   font-weight: bold;
 }
+.slot.over {
+  opacity: 1;
+}
+.row button.over {
+  outline: 2px solid;
+}
